@@ -16,7 +16,9 @@ provider "aws" {
 # --------------------------------------------------
 
 resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 
   tags = {
     Name = "three-tier-vpc"
@@ -296,6 +298,50 @@ resource "aws_launch_template" "app" {
       Name = "three-tier-app"
     }
   }
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+
+    exec > /var/log/user-data.log 2>&1
+    set -x
+
+    echo "=== USER DATA STARTED ==="
+
+    mkdir -p /var/www/app
+
+    cat > /var/www/app/index.html <<'HTML'
+    <html>
+      <head>
+        <title>Three Tier AWS App</title>
+      </head>
+      <body>
+        <h1>Hello from the AWS Three-Tier Architecture!</h1>
+        <p>This page is running on an EC2 instance in a private subnet.</p>
+      </body>
+    </html>
+    HTML
+
+    echo "=== CHECKING PYTHON ==="
+    which python3
+    python3 --version
+
+    echo "=== STARTING APPLICATION ==="
+    cd /var/www/app
+nohup python3 -m http.server 8080 --bind 0.0.0.0 > /var/log/app-server.log 2>&1 &
+
+sleep 2
+
+echo "=== CHECKING LOCAL APPLICATION ==="
+curl -v http://127.0.0.1:8080/ || true
+
+echo "=== CHECKING PORT 8080 ==="
+ss -lntp | grep 8080 || true
+    echo "=== USER DATA FINISHED ==="
+  EOF
+  )
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_ssm.name
+  }
 }
 
 # --------------------------------------------------
@@ -326,6 +372,13 @@ resource "aws_autoscaling_group" "app" {
     key                 = "Name"
     value               = "three-tier-app"
     propagate_at_launch = true
+  }
+  instance_refresh {
+    strategy = "Rolling"
+
+    preferences {
+      min_healthy_percentage = 50
+    }
   }
 }
 
@@ -390,4 +443,18 @@ resource "aws_lb_listener" "app_http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app.arn
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "app_all_outbound" {
+  security_group_id = aws_security_group.app.id
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "-1"
+}
+resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
 }

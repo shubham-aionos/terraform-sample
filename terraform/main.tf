@@ -298,46 +298,7 @@ resource "aws_launch_template" "app" {
       Name = "three-tier-app"
     }
   }
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-
-    exec > /var/log/user-data.log 2>&1
-    set -x
-
-    echo "=== USER DATA STARTED ==="
-
-    mkdir -p /var/www/app
-
-    cat > /var/www/app/index.html <<'HTML'
-    <html>
-      <head>
-        <title>Three Tier AWS App</title>
-      </head>
-      <body>
-        <h1>Hello from the AWS Three-Tier Architecture!</h1>
-        <p>This page is running on an EC2 instance in a private subnet.</p>
-      </body>
-    </html>
-    HTML
-
-    echo "=== CHECKING PYTHON ==="
-    which python3
-    python3 --version
-
-    echo "=== STARTING APPLICATION ==="
-    cd /var/www/app
-nohup python3 -m http.server 8080 --bind 0.0.0.0 > /var/log/app-server.log 2>&1 &
-
-sleep 2
-
-echo "=== CHECKING LOCAL APPLICATION ==="
-curl -v http://127.0.0.1:8080/ || true
-
-echo "=== CHECKING PORT 8080 ==="
-ss -lntp | grep 8080 || true
-    echo "=== USER DATA FINISHED ==="
-  EOF
-  )
+  user_data = filebase64("${path.module}/user_data.sh")
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_ssm.name
@@ -457,4 +418,24 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
   ip_protocol                  = "tcp"
   from_port                    = 8080
   to_port                      = 8080
+}
+
+resource "aws_iam_role" "codebuild" {
+  name = "three-tier-codebuild-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "codebuild.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
 }

@@ -10,10 +10,8 @@ phases:
       - terraform version
 
       - echo "Installing Checkov"
-      - python3 -m venv /tmp/checkov-venv
-      - source /tmp/checkov-venv/bin/activate
-      - pip install --upgrade pip
-      - pip install checkov
+      - pip3 install --upgrade pip
+      - pip3 install checkov
       - checkov --version
 
   pre_build:
@@ -30,7 +28,6 @@ phases:
   build:
     commands:
       - echo "Running Checkov"
-      - source /tmp/checkov-venv/bin/activate
       - checkov -d terraform
 
   post_build:

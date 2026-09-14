@@ -33,7 +33,7 @@ resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "ap-south-1a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = {
     Name = "public-a"
@@ -44,7 +44,7 @@ resource "aws_subnet" "public_b" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
   availability_zone       = "ap-south-1b"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = {
     Name = "public-b"
@@ -218,11 +218,25 @@ resource "aws_security_group" "db" {
 }
 
 # --------------------------------------------------
+# Default Security Group
+# --------------------------------------------------
+
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "three-tier-default-sg"
+  }
+}
+
+# --------------------------------------------------
 # Security Group Rules
 # --------------------------------------------------
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = aws_security_group.alb.id
+
+  description = "Allow HTTP from the internet to the public ALB"
 
   cidr_ipv4   = "0.0.0.0/0"
   from_port   = 80
@@ -233,6 +247,8 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   security_group_id = aws_security_group.alb.id
 
+  description = "Allow HTTPS from the internet to the public ALB"
+
   cidr_ipv4   = "0.0.0.0/0"
   from_port   = 443
   to_port     = 443
@@ -241,6 +257,8 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 
 resource "aws_vpc_security_group_ingress_rule" "app_http" {
   security_group_id = aws_security_group.app.id
+
+  description = "Allow application traffic from the ALB"
 
   referenced_security_group_id = aws_security_group.alb.id
   from_port                    = 8080
@@ -251,10 +269,32 @@ resource "aws_vpc_security_group_ingress_rule" "app_http" {
 resource "aws_vpc_security_group_ingress_rule" "db_postgres" {
   security_group_id = aws_security_group.db.id
 
+  description = "Allow PostgreSQL from the application tier"
+
   referenced_security_group_id = aws_security_group.app.id
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "app_all_outbound" {
+  security_group_id = aws_security_group.app.id
+
+  description = "Allow application instances to reach required destinations"
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "-1"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
+  security_group_id = aws_security_group.alb.id
+
+  description = "Allow ALB to reach application instances on port 8080"
+
+  referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
 }
 
 # --------------------------------------------------
@@ -291,6 +331,13 @@ resource "aws_launch_template" "app" {
     aws_security_group.app.id
   ]
 
+  # Enforce IMDSv2
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   tag_specifications {
     resource_type = "instance"
 
@@ -298,6 +345,7 @@ resource "aws_launch_template" "app" {
       Name = "three-tier-app"
     }
   }
+
   user_data = filebase64("${path.module}/user_data.sh")
 
   iam_instance_profile {
@@ -334,6 +382,7 @@ resource "aws_autoscaling_group" "app" {
     value               = "three-tier-app"
     propagate_at_launch = true
   }
+
   instance_refresh {
     strategy = "Rolling"
 
@@ -377,6 +426,9 @@ resource "aws_lb" "app" {
   internal           = false
   load_balancer_type = "application"
 
+  # Reject malformed HTTP headers
+  drop_invalid_header_fields = true
+
   security_groups = [
     aws_security_group.alb.id
   ]
@@ -406,19 +458,9 @@ resource "aws_lb_listener" "app_http" {
   }
 }
 
-resource "aws_vpc_security_group_egress_rule" "app_all_outbound" {
-  security_group_id = aws_security_group.app.id
-
-  cidr_ipv4   = "0.0.0.0/0"
-  ip_protocol = "-1"
-}
-resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
-  security_group_id            = aws_security_group.alb.id
-  referenced_security_group_id = aws_security_group.app.id
-  ip_protocol                  = "tcp"
-  from_port                    = 8080
-  to_port                      = 8080
-}
+# --------------------------------------------------
+# CodeBuild IAM Role
+# --------------------------------------------------
 
 resource "aws_iam_role" "codebuild" {
   name = "three-tier-codebuild-role"

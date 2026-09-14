@@ -359,15 +359,13 @@ check_launch_template_versions() {
         local instance_version
 
         instance_version="$(
-            aws ec2 describe-instances \
-                --instance-ids "$instance_id" \
+            aws autoscaling describe-auto-scaling-instances \
                 --region "$EXPECTED_REGION" \
                 --query \
-                'Reservations[0].Instances[0].LaunchTemplate.Version' \
+                "AutoScalingInstances[?InstanceId==\`$instance_id\`].LaunchTemplate.Version" \
                 --output text \
                 2>/dev/null || true
         )"
-
         echo "Instance $instance_id → Launch Template version $instance_version"
 
         if [ "$instance_version" != "$latest_version" ]; then

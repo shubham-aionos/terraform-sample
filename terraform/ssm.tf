@@ -10,6 +10,7 @@ resource "aws_security_group" "ssm_endpoints" {
 
 resource "aws_vpc_security_group_ingress_rule" "ssm_endpoints_https" {
   security_group_id            = aws_security_group.ssm_endpoints.id
+  description                  = "Allow application instances to reach SSM VPC endpoints over HTTPS"
   referenced_security_group_id = aws_security_group.app.id
   ip_protocol                  = "tcp"
   from_port                    = 443

@@ -26,7 +26,7 @@ resource "aws_iam_role" "vpc_flow_logs" {
 
 
 resource "aws_iam_role_policy" "vpc_flow_logs" {
-#checkov:skip=CKV_AWS_355:CloudWatch Logs Describe APIs require wildcard resource scope
+  #checkov:skip=CKV_AWS_355:CloudWatch Logs Describe APIs require wildcard resource scope
 
   name = "three-tier-vpc-flow-logs-policy"
   role = aws_iam_role.vpc_flow_logs.id

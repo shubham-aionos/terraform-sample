@@ -444,9 +444,9 @@ resource "aws_lb_target_group" "app" {
 #checkov:skip=CKV2_AWS_28:WAF is deferred because this is a disposable learning environment
 
 resource "aws_lb" "app" {
-#checkov:skip=CKV_AWS_150:Deletion protection is disabled to allow daily terraform destroy
-#checkov:skip=CKV_AWS_91:ALB access logging is deferred for this disposable cost-conscious lab
-#checkov:skip=CKV2_AWS_20:HTTP to HTTPS redirect is deferred until ACM certificate and HTTPS listener are introduced
+  #checkov:skip=CKV_AWS_150:Deletion protection is disabled to allow daily terraform destroy
+  #checkov:skip=CKV_AWS_91:ALB access logging is deferred for this disposable cost-conscious lab
+  #checkov:skip=CKV2_AWS_20:HTTP to HTTPS redirect is deferred until ACM certificate and HTTPS listener are introduced
   #checkov:skip=CKV2_AWS_28:AWS WAF is deferred for this disposable cost-conscious lab
 
   name               = "three-tier-app-alb"
@@ -480,7 +480,7 @@ resource "aws_lb" "app" {
 #checkov:skip=CKV_AWS_2:HTTPS is intentionally deferred; this lab uses an HTTP listener
 #checkov:skip=CKV_AWS_103:TLS is not applicable because the current lab listener is HTTP
 resource "aws_lb_listener" "app_http" {
-#checkov:skip=CKV_AWS_2:HTTP listener is intentional for this lab; HTTPS requires certificate setup
+  #checkov:skip=CKV_AWS_2:HTTP listener is intentional for this lab; HTTPS requires certificate setup
   #checkov:skip=CKV_AWS_103:TLS listener is deferred until ACM certificate and HTTPS listener are introduced
 
   load_balancer_arn = aws_lb.app.arn

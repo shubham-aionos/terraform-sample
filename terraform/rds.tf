@@ -1,7 +1,3 @@
-# --------------------------------------------------
-# RDS Subnet Group
-# --------------------------------------------------
-
 resource "aws_db_subnet_group" "main" {
   name = "three-tier-db-subnet-group"
 
@@ -15,11 +11,10 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
-# --------------------------------------------------
-# RDS PostgreSQL
-# --------------------------------------------------
-
 resource "aws_db_instance" "postgres" {
+  #checkov:skip=CKV_AWS_353:Performance Insights is deferred for this disposable lab
+  #checkov:skip=CKV_AWS_118:Enhanced Monitoring is deferred for this disposable lab
+  #checkov:skip=CKV2_AWS_30:PostgreSQL query logging is deferred for this disposable lab
   identifier = "three-tier-postgres"
 
   engine         = "postgres"
@@ -27,7 +22,7 @@ resource "aws_db_instance" "postgres" {
 
   instance_class        = "db.t3.micro"
   allocated_storage     = 20
-  max_allocated_storage = 20
+  max_allocated_storage = 50
   storage_type          = "gp3"
   storage_encrypted     = true
 
@@ -38,22 +33,27 @@ resource "aws_db_instance" "postgres" {
   port = 5432
 
   db_subnet_group_name = aws_db_subnet_group.main.name
-
   vpc_security_group_ids = [
     aws_security_group.db.id
   ]
 
   publicly_accessible = false
 
-  multi_az = false
-
   backup_retention_period = 0
+  skip_final_snapshot     = true
+  deletion_protection     = false
 
-  skip_final_snapshot = true
+  auto_minor_version_upgrade = true
+  copy_tags_to_snapshot      = true
 
-  deletion_protection = false
+  enabled_cloudwatch_logs_exports = [
+    "postgresql"
+  ]
 
-  apply_immediately = true
+  #checkov:skip=CKV_AWS_161:IAM database authentication is intentionally disabled for this lab
+  #checkov:skip=CKV_AWS_157:Multi-AZ is intentionally disabled to minimize lab cost
+  #checkov:skip=CKV_AWS_293:Deletion protection is intentionally disabled for daily lab destroy
+  #checkov:skip=CKV_AWS_133:Automated backups are intentionally disabled for this disposable lab
 
   tags = {
     Name = "three-tier-postgres"

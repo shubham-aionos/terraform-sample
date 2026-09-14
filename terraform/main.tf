@@ -233,7 +233,13 @@ resource "aws_default_security_group" "default" {
 # Security Group Rules
 # --------------------------------------------------
 
+# Intentional exception:
+# The lab currently uses HTTP rather than HTTPS.
+# This is a disposable learning environment, not a production endpoint.
+#checkov:skip=CKV_AWS_260:HTTP is intentionally exposed for this disposable learning lab
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  #checkov:skip=CKV_AWS_260:HTTP is intentionally exposed for this disposable lab; HTTPS will be introduced in the production-hardening phase
+
   security_group_id = aws_security_group.alb.id
 
   description = "Allow HTTP from the internet to the public ALB"
@@ -396,7 +402,13 @@ resource "aws_autoscaling_group" "app" {
 # Application Target Group
 # --------------------------------------------------
 
+# Intentional exception:
+# The application currently serves HTTP on port 8080.
+# HTTPS between ALB and EC2 will be introduced in a later hardening step.
+#checkov:skip=CKV_AWS_378:The backend application intentionally uses HTTP for this disposable lab
 resource "aws_lb_target_group" "app" {
+  #checkov:skip=CKV_AWS_378:HTTP between ALB and application is intentional for this disposable lab; backend TLS will be introduced in the production-hardening phase
+
   name     = "three-tier-app-tg"
   port     = 8080
   protocol = "HTTP"
@@ -421,7 +433,22 @@ resource "aws_lb_target_group" "app" {
 # Application Load Balancer
 # --------------------------------------------------
 
+# Intentional lab exceptions:
+# - Deletion protection must remain disabled for ./lab.sh down.
+# - Access logging is deferred for this cost-conscious lab.
+# - HTTPS redirect is deferred because the current application uses HTTP.
+# - WAF is deferred until we cover production edge protection.
+#checkov:skip=CKV_AWS_150:Deletion protection is disabled so the disposable lab can be destroyed
+#checkov:skip=CKV_AWS_91:ALB access logging is deferred for this cost-conscious disposable lab
+#checkov:skip=CKV2_AWS_20:HTTPS redirect is deferred because this lab intentionally uses HTTP
+#checkov:skip=CKV2_AWS_28:WAF is deferred because this is a disposable learning environment
+
 resource "aws_lb" "app" {
+#checkov:skip=CKV_AWS_150:Deletion protection is disabled to allow daily terraform destroy
+#checkov:skip=CKV_AWS_91:ALB access logging is deferred for this disposable cost-conscious lab
+#checkov:skip=CKV2_AWS_20:HTTP to HTTPS redirect is deferred until ACM certificate and HTTPS listener are introduced
+  #checkov:skip=CKV2_AWS_28:AWS WAF is deferred for this disposable cost-conscious lab
+
   name               = "three-tier-app-alb"
   internal           = false
   load_balancer_type = "application"
@@ -447,7 +474,15 @@ resource "aws_lb" "app" {
 # ALB HTTP Listener
 # --------------------------------------------------
 
+# Intentional lab exceptions:
+# HTTPS/TLS is deferred until we introduce ACM certificates
+# and a production-style HTTPS listener.
+#checkov:skip=CKV_AWS_2:HTTPS is intentionally deferred; this lab uses an HTTP listener
+#checkov:skip=CKV_AWS_103:TLS is not applicable because the current lab listener is HTTP
 resource "aws_lb_listener" "app_http" {
+#checkov:skip=CKV_AWS_2:HTTP listener is intentional for this lab; HTTPS requires certificate setup
+  #checkov:skip=CKV_AWS_103:TLS listener is deferred until ACM certificate and HTTPS listener are introduced
+
   load_balancer_arn = aws_lb.app.arn
   port              = 80
   protocol          = "HTTP"

@@ -1,0 +1,38 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Installing Terraform"
+      - curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
+      - unzip -o /tmp/terraform.zip -d /tmp/terraform
+      - mv /tmp/terraform/terraform /usr/local/bin/terraform
+      - terraform version
+
+      - echo "Installing Checkov"
+      - python3 -m venv /tmp/checkov-venv
+      - source /tmp/checkov-venv/bin/activate
+      - pip install --upgrade pip
+      - pip install checkov
+      - checkov --version
+
+  pre_build:
+    commands:
+      - echo "Checking Terraform formatting"
+      - terraform fmt -check -recursive terraform
+
+      - echo "Initializing Terraform"
+      - terraform -chdir=terraform init -input=false
+
+      - echo "Validating Terraform"
+      - terraform -chdir=terraform validate
+
+  build:
+    commands:
+      - echo "Running Checkov"
+      - source /tmp/checkov-venv/bin/activate
+      - checkov -d terraform
+
+  post_build:
+    commands:
+      - echo "CI validation completed successfully"

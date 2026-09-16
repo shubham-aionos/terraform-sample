@@ -49,28 +49,36 @@ resource "aws_iam_role_policy" "codepipeline" {
           "codebuild:BatchGetBuilds"
         ]
 
-        Resource = "arn:aws:codebuild:ap-south-1:812114845397:project/three-tier-terraform-ci"
+        Resource = aws_codebuild_project.terraform_ci.arn
       },
       {
         Sid    = "UseArtifactBucket"
         Effect = "Allow"
+
         Action = [
           "s3:GetBucketVersioning",
           "s3:GetObject",
           "s3:GetObjectVersion",
           "s3:PutObject"
         ]
+
         Resource = [
           aws_s3_bucket.codepipeline_artifacts.arn,
           "${aws_s3_bucket.codepipeline_artifacts.arn}/*"
         ]
       }
-
     ]
   })
 }
 
 resource "aws_s3_bucket" "codepipeline_artifacts" {
+  #checkov:skip=CKV_AWS_18:S3 access logging is deferred for this disposable lab
+
+  #checkov:skip=CKV_AWS_144:Cross-region replication is unnecessary for this disposable single-region lab
+
+  #checkov:skip=CKV_AWS_145:SSE-S3 encryption is sufficient for this disposable lab; customer-managed KMS is deferred
+
+  #checkov:skip=CKV2_AWS_62:Event notifications are unnecessary for the CodePipeline artifact bucket
   bucket        = "three-tier-codepipeline-artifacts-812114845397"
   force_destroy = true
 }
@@ -100,9 +108,34 @@ resource "aws_s3_bucket_versioning" "codepipeline_artifacts" {
   versioning_configuration {
     status = "Enabled"
   }
+
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "codepipeline_artifacts" {
+  bucket = aws_s3_bucket.codepipeline_artifacts.id
+
+  rule {
+    id     = "expire-old-artifacts"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 7
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 resource "aws_codepipeline" "three_tier" {
+  #checkov:skip=CKV_AWS_219:Customer-managed KMS encryption for the CodePipeline artifact store is deferred for this disposable lab
   name     = "three-tier-terraform-pipeline"
   role_arn = aws_iam_role.codepipeline.arn
 
@@ -143,8 +176,7 @@ resource "aws_codepipeline" "three_tier" {
       input_artifacts = ["source_output"]
 
       configuration = {
-        ProjectName = "three-tier-terraform-ci"
-      }
+      ProjectName = aws_codebuild_project.terraform_ci.name }
     }
   }
 }

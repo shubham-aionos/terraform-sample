@@ -1,16 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = "ap-south-1"
-}
-
 # --------------------------------------------------
 # VPC
 # --------------------------------------------------
@@ -491,28 +478,4 @@ resource "aws_lb_listener" "app_http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app.arn
   }
-}
-
-# --------------------------------------------------
-# CodeBuild IAM Role
-# --------------------------------------------------
-
-resource "aws_iam_role" "codebuild" {
-  name = "three-tier-codebuild-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-
-    Statement = [
-      {
-        Effect = "Allow"
-
-        Principal = {
-          Service = "codebuild.amazonaws.com"
-        }
-
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
 }

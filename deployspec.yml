@@ -1,0 +1,174 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Installing Terraform..."
+      - curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
+      - unzip -o /tmp/terraform.zip -d /tmp/terraform
+      - mv /tmp/terraform/terraform /usr/local/bin/terraform
+      - terraform version
+
+  pre_build:
+    commands:
+      - echo "Getting AWS account ID..."
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - echo "AWS account: $AWS_ACCOUNT_ID"
+
+      - echo "Initializing application Terraform with persistent S3 state..."
+      - terraform -chdir=terraform/app init -input=false -reconfigure -backend-config="bucket=three-tier-terraform-state-$AWS_ACCOUNT_ID" -backend-config="key=app/terraform.tfstate" -backend-config="region=ap-south-1" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+
+      - echo "Validating application Terraform..."
+      - terraform -chdir=terraform/app validate
+
+  build:
+    commands:
+      - |
+        set +e
+        DEPLOY_RESULT=0
+
+        echo "=========================================="
+        echo "TERRAFORM APPLY"
+        echo "=========================================="
+
+        terraform -chdir=terraform/app apply -auto-approve
+
+        if [ $? -ne 0 ]; then
+          echo "Terraform apply failed."
+          DEPLOY_RESULT=1
+        else
+          echo "Terraform apply succeeded."
+
+          echo "=========================================="
+          echo "WAITING FOR APPLICATION"
+          echo "=========================================="
+
+          APP_READY=0
+
+          for i in $(seq 1 60); do
+            COUNT=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names three-tier-app-asg \
+              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | length(@)' \
+              --output text 2>/dev/null)
+
+            echo "InService instances: $COUNT"
+
+            if [ "$COUNT" -ge 2 ]; then
+              APP_READY=1
+              break
+            fi
+
+            sleep 10
+          done
+
+          if [ "$APP_READY" -ne 1 ]; then
+            echo "Application instances did not become ready."
+            DEPLOY_RESULT=1
+          else
+            echo "Waiting for healthy ALB targets."
+
+            TG_ARN=$(aws elbv2 describe-target-groups \
+              --names three-tier-app-tg \
+              --query 'TargetGroups[0].TargetGroupArn' \
+              --output text 2>/dev/null)
+
+            ALB_READY=0
+
+            for i in $(seq 1 60); do
+              HEALTHY=$(aws elbv2 describe-target-health \
+                --target-group-arn "$TG_ARN" \
+                --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' \
+                --output text 2>/dev/null)
+
+              echo "Healthy targets: $HEALTHY"
+
+              if [ "$HEALTHY" -ge 2 ]; then
+                ALB_READY=1
+                break
+              fi
+
+              sleep 10
+            done
+
+            if [ "$ALB_READY" -ne 1 ]; then
+              echo "ALB targets did not become healthy."
+              DEPLOY_RESULT=1
+            else
+              ALB_DNS=$(aws elbv2 describe-load-balancers \
+                --names three-tier-app-alb \
+                --query 'LoadBalancers[0].DNSName' \
+                --output text 2>/dev/null)
+
+              echo "ALB DNS: $ALB_DNS"
+
+              echo "=========================================="
+              echo "VERIFYING APPLICATION TEXT"
+              echo "=========================================="
+
+              TEXT_FOUND=0
+
+              for i in $(seq 1 12); do
+                RESPONSE=$(curl -fsS "http://$ALB_DNS/" 2>/dev/null)
+
+                echo "Application response:"
+                echo "$RESPONSE"
+
+                if echo "$RESPONSE" | grep -Fq "Hello from the AWS Three-Tier Architecture"; then
+                  TEXT_FOUND=1
+                  break
+                fi
+
+                sleep 10
+              done
+
+              if [ "$TEXT_FOUND" -eq 1 ]; then
+                echo "=========================================="
+                echo "APPLICATION VERIFICATION PASSED"
+                echo "Expected application text was found."
+                echo "=========================================="
+              else
+                echo "=========================================="
+                echo "APPLICATION VERIFICATION FAILED"
+                echo "Expected application text was not found."
+                echo "=========================================="
+                DEPLOY_RESULT=1
+              fi
+            fi
+          fi
+        fi
+
+        echo "=========================================="
+
+        if [ "$DEPLOY_RESULT" -ne 0 ]; then
+          echo "DEPLOYMENT FAILED — DESTROYING APPLICATION INFRASTRUCTURE"
+          echo "=========================================="
+
+          terraform -chdir=terraform/app destroy -auto-approve
+
+          DESTROY_RESULT=$?
+
+          if [ "$DESTROY_RESULT" -ne 0 ]; then
+            echo "WARNING: Terraform destroy also failed."
+            echo "Manual cleanup may be required."
+          else
+            echo "Failed application infrastructure destroyed successfully."
+          fi
+
+          echo "=========================================="
+          echo "DEPLOYMENT TEST FAILED"
+          echo "=========================================="
+          exit 1
+        fi
+
+        echo "=========================================="
+        echo "DEPLOYMENT VERIFIED — KEEPING INFRASTRUCTURE"
+        echo "=========================================="
+        echo "Application is deployed and responding correctly."
+        echo "Terraform state has been persisted to S3."
+        echo "=========================================="
+
+        exit 0
+
+  post_build:
+    commands:
+      - echo "Deployment verification completed."

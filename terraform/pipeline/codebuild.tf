@@ -15,7 +15,7 @@ resource "aws_codebuild_project" "terraform_ci" {
   }
 
   artifacts {
-    type = "NO_ARTIFACTS"
+    type = "CODEPIPELINE"
   }
 
   environment {

@@ -49,8 +49,10 @@ resource "aws_iam_role_policy" "codepipeline" {
           "codebuild:BatchGetBuilds"
         ]
 
-        Resource = aws_codebuild_project.terraform_ci.arn
-      },
+        Resource = [
+          aws_codebuild_project.terraform_ci.arn,
+          aws_codebuild_project.terraform_deploy.arn
+      ] },
       {
         Sid    = "UseArtifactBucket"
         Effect = "Allow"
@@ -176,10 +178,29 @@ resource "aws_codepipeline" "three_tier" {
       input_artifacts = ["source_output"]
 
       configuration = {
-      ProjectName = aws_codebuild_project.terraform_ci.name }
+        ProjectName = aws_codebuild_project.terraform_ci.name
+      }
+    }
+  }
+
+  stage {
+    name = "Deploy"
+
+    action {
+      name            = "DeployAndVerify"
+      category        = "Build"
+      owner           = "AWS"
+      provider        = "CodeBuild"
+      version         = "1"
+      input_artifacts = ["source_output"]
+
+      configuration = {
+        ProjectName = aws_codebuild_project.terraform_deploy.name
+      }
     }
   }
 }
+
 resource "aws_iam_role_policy" "codebuild_artifacts" {
   name = "three-tier-codebuild-artifacts"
   role = aws_iam_role.codebuild.id

@@ -3,33 +3,34 @@ version: 0.2
 phases:
   install:
     commands:
-      - echo "Installing Terraform"
-      - curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
-      - unzip -o /tmp/terraform.zip -d /tmp/terraform
-      - mv /tmp/terraform/terraform /usr/local/bin/terraform
+      - echo "Installing Terraform..."
+      - curl -fsSLo terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
+      - unzip -o terraform.zip
+      - install -m 0755 terraform /usr/local/bin/terraform
       - terraform version
-
-      - echo "Installing Checkov"
-      - pip3 install --upgrade pip
-      - pip3 install checkov
-      - checkov --version
+      - echo "Installing Checkov..."
+      - pip3 install --no-cache-dir checkov==3.3.17
 
   pre_build:
     commands:
-      - echo "Checking Terraform formatting"
+      - echo "Checking Terraform formatting..."
       - terraform fmt -check -recursive terraform
 
-      - echo "Initializing Terraform"
-      - terraform -chdir=terraform init -input=false
+      - echo "Initializing application Terraform..."
+      - terraform -chdir=terraform/app init -backend=false -input=false
 
-      - echo "Validating Terraform"
-      - terraform -chdir=terraform validate
+      - echo "Validating application Terraform..."
+      - terraform -chdir=terraform/app validate
+
+      - echo "Initializing pipeline Terraform..."
+      - terraform -chdir=terraform/pipeline init -input=false
+
+      - echo "Validating pipeline Terraform..."
+      - terraform -chdir=terraform/pipeline validate
+
+      - echo "Running Checkov..."
+      - checkov -d terraform
 
   build:
     commands:
-      - echo "Running Checkov"
-      - checkov -d terraform
-
-  post_build:
-    commands:
-      - echo "CI validation completed successfully"
+      - echo "Terraform CI validation completed successfully."

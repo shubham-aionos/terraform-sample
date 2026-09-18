@@ -4,17 +4,38 @@ set -Eeuo pipefail
 
 # ============================================================
 # AWS THREE-TIER LAB
-# Safe Terraform deployment / destruction helper
+# Terraform / CodePipeline bootstrap and teardown helper
+#
+# Architecture:
+#
+#   terraform/pipeline
+#       CodePipeline
+#       CodeBuild
+#       Artifact bucket
+#       Terraform state bucket
+#
+#   terraform/app
+#       VPC
+#       ALB
+#       ASG / EC2
+#       RDS
+#       SSM
+#       VPC Flow Logs
+#
+# Pipeline behavior:
+#   Apply -> verify application
+#       PASS -> keep infrastructure
+#       FAIL -> destroy application infrastructure
 # ============================================================
 
 EXPECTED_REGION="ap-south-1"
 EXPECTED_ACCOUNT="812114845397"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TERRAFORM_DIR="$SCRIPT_DIR/terraform"
 
-PLAN_FILE="$TERRAFORM_DIR/tfplan"
-DESTROY_PLAN_FILE="$TERRAFORM_DIR/destroy.tfplan"
+TERRAFORM_ROOT="$SCRIPT_DIR/terraform"
+APP_DIR="$TERRAFORM_ROOT/app"
+PIPELINE_DIR="$TERRAFORM_ROOT/pipeline"
 
 MAX_WAIT_SECONDS=600
 HEALTH_CHECK_INTERVAL=10
@@ -26,9 +47,12 @@ LAUNCH_TEMPLATE_NAME="three-tier-app-template"
 
 EXPECTED_APP_TEXT="Hello from the AWS Three-Tier Architecture"
 
+STATE_BUCKET="three-tier-terraform-state-${EXPECTED_ACCOUNT}"
+STATE_KEY="app/terraform.tfstate"
+
 
 # ============================================================
-# Logging / error handling
+# Logging
 # ============================================================
 
 log() {
@@ -56,24 +80,6 @@ die() {
     exit 1
 }
 
-cleanup() {
-    rm -f "$PLAN_FILE"
-    rm -f "$DESTROY_PLAN_FILE"
-}
-
-on_error() {
-    local exit_code=$?
-
-    error "Command failed."
-    error "Line: ${BASH_LINENO[0]}"
-    error "Command: ${BASH_COMMAND}"
-
-    exit "$exit_code"
-}
-
-trap cleanup EXIT
-trap on_error ERR
-
 
 # ============================================================
 # Basic checks
@@ -91,24 +97,33 @@ check_tools() {
     require_command terraform
     require_command bash
     require_command curl
-    require_command awk
     require_command grep
     require_command wc
 
     success "Required tools are installed"
 }
 
+
 check_project() {
     log "Checking project structure"
 
-    [ -d "$TERRAFORM_DIR" ] || \
-        die "Terraform directory not found: $TERRAFORM_DIR"
+    [ -d "$TERRAFORM_ROOT" ] || \
+        die "Terraform directory not found: $TERRAFORM_ROOT"
 
-    [ -f "$TERRAFORM_DIR/main.tf" ] || \
-        die "main.tf not found"
+    [ -d "$APP_DIR" ] || \
+        die "Application Terraform directory not found: $APP_DIR"
 
-    [ -f "$TERRAFORM_DIR/user_data.sh" ] || \
-        die "user_data.sh not found"
+    [ -d "$PIPELINE_DIR" ] || \
+        die "Pipeline Terraform directory not found: $PIPELINE_DIR"
+
+    [ -f "$APP_DIR/main.tf" ] || \
+        die "Application main.tf not found"
+
+    [ -f "$APP_DIR/user_data.sh" ] || \
+        die "Application user_data.sh not found"
+
+    [ -f "$PIPELINE_DIR/codepipeline.tf" ] || \
+        die "Pipeline CodePipeline configuration not found"
 
     success "Project structure looks correct"
 }
@@ -121,26 +136,23 @@ check_project() {
 check_aws() {
     log "Checking AWS credentials and account"
 
-    local identity
-
-    identity="$(aws sts get-caller-identity 2>/dev/null)" || {
+    if ! aws sts get-caller-identity >/dev/null 2>&1; then
         error "AWS credentials are missing or expired."
         echo
         echo "Run:"
         echo "  aws login"
         echo
         exit 1
-    }
+    fi
 
     local current_account
+    local current_region
 
     current_account="$(
         aws sts get-caller-identity \
             --query Account \
             --output text
     )"
-
-    local current_region
 
     current_region="$(aws configure get region 2>/dev/null || true)"
 
@@ -172,87 +184,135 @@ check_aws() {
 
 
 # ============================================================
-# Local validation
+# Application validation
 # ============================================================
 
 validate_user_data() {
-    log "Validating user-data shell script"
+    log "Validating application user-data"
 
-    bash -n "$TERRAFORM_DIR/user_data.sh"
+    bash -n "$APP_DIR/user_data.sh"
 
     success "user_data.sh syntax PASSED"
 }
 
-validate_terraform() {
-    log "Formatting Terraform"
 
-    terraform -chdir="$TERRAFORM_DIR" fmt -check=false
+validate_app_terraform() {
+    log "Formatting application Terraform"
 
-    log "Initializing Terraform"
+    terraform -chdir="$APP_DIR" fmt -check=false
 
-    terraform -chdir="$TERRAFORM_DIR" init -input=false
+    log "Initializing application Terraform"
 
-    log "Validating Terraform"
+    terraform -chdir="$APP_DIR" init \
+        -backend=false \
+        -input=false
 
-    terraform -chdir="$TERRAFORM_DIR" validate
+    log "Validating application Terraform"
 
-    success "Terraform validation PASSED"
+    terraform -chdir="$APP_DIR" validate
+
+    success "Application Terraform validation PASSED"
 }
 
 
 # ============================================================
-# Terraform plan
+# Pipeline Terraform validation
 # ============================================================
 
-create_plan() {
-    log "Creating Terraform plan"
+validate_pipeline_terraform() {
+    log "Formatting pipeline Terraform"
 
-    rm -f "$PLAN_FILE"
+    terraform -chdir="$PIPELINE_DIR" fmt -check=false
 
-    terraform -chdir="$TERRAFORM_DIR" plan \
+    log "Initializing pipeline Terraform"
+
+    terraform -chdir="$PIPELINE_DIR" init \
+        -input=false
+
+    log "Validating pipeline Terraform"
+
+    terraform -chdir="$PIPELINE_DIR" validate
+
+    success "Pipeline Terraform validation PASSED"
+}
+
+
+# ============================================================
+# Pipeline bootstrap
+# ============================================================
+
+plan_pipeline() {
+    log "Creating CodePipeline infrastructure plan"
+
+    terraform -chdir="$PIPELINE_DIR" plan \
+        -input=false
+}
+
+
+apply_pipeline() {
+    log "Applying CodePipeline infrastructure"
+
+    terraform -chdir="$PIPELINE_DIR" apply \
         -input=false \
-        -out="$PLAN_FILE"
+        -auto-approve
 
-    [ -f "$PLAN_FILE" ] || \
-        die "Terraform plan file was not created"
-
-    success "Terraform plan created"
+    success "CodePipeline infrastructure is deployed"
 }
 
-create_destroy_plan() {
-    log "Creating Terraform destroy plan"
 
-    rm -f "$DESTROY_PLAN_FILE"
+# ============================================================
+# State bucket helpers
+# ============================================================
 
-    terraform -chdir="$TERRAFORM_DIR" plan \
-        -destroy \
+state_bucket_exists() {
+    aws s3api head-bucket \
+        --bucket "$STATE_BUCKET" \
+        --region "$EXPECTED_REGION" \
+        >/dev/null 2>&1
+}
+
+
+# ============================================================
+# Application Terraform backend
+# ============================================================
+
+init_app_backend() {
+    log "Initializing application Terraform with S3 state"
+
+    state_bucket_exists || {
+        error "Terraform state bucket does not exist:"
+        error "  $STATE_BUCKET"
+        return 1
+    }
+
+    terraform -chdir="$APP_DIR" init \
         -input=false \
-        -out="$DESTROY_PLAN_FILE"
+        -reconfigure \
+        -backend-config="bucket=$STATE_BUCKET" \
+        -backend-config="key=$STATE_KEY" \
+        -backend-config="region=$EXPECTED_REGION" \
+        -backend-config="encrypt=true" \
+        -backend-config="use_lockfile=true"
 
-    [ -f "$DESTROY_PLAN_FILE" ] || \
-        die "Destroy plan file was not created"
-
-    success "Terraform destroy plan created"
+    success "Application Terraform backend initialized"
 }
 
 
 # ============================================================
-# Terraform apply
+# Application state detection
 # ============================================================
 
-apply_plan() {
-    log "Applying the reviewed Terraform plan"
-
-    terraform -chdir="$TERRAFORM_DIR" apply \
-        -input=false \
-        "$PLAN_FILE"
-
-    success "Terraform apply completed"
+app_state_exists() {
+    aws s3api head-object \
+        --bucket "$STATE_BUCKET" \
+        --key "$STATE_KEY" \
+        --region "$EXPECTED_REGION" \
+        >/dev/null 2>&1
 }
 
 
 # ============================================================
-# AWS resource discovery
+# Application discovery
 # ============================================================
 
 get_instance_ids() {
@@ -263,6 +323,7 @@ get_instance_ids() {
         --output text
 }
 
+
 get_target_group_arn() {
     aws elbv2 describe-target-groups \
         --region "$EXPECTED_REGION" \
@@ -271,6 +332,7 @@ get_target_group_arn() {
         --output text
 }
 
+
 get_alb_dns() {
     aws elbv2 describe-load-balancers \
         --region "$EXPECTED_REGION" \
@@ -278,6 +340,7 @@ get_alb_dns() {
         --query 'LoadBalancers[0].DNSName' \
         --output text
 }
+
 
 get_latest_launch_template_version() {
     aws ec2 describe-launch-template-versions \
@@ -290,7 +353,7 @@ get_latest_launch_template_version() {
 
 
 # ============================================================
-# Wait for ASG instances
+# Wait for ASG
 # ============================================================
 
 wait_for_instances() {
@@ -323,12 +386,12 @@ wait_for_instances() {
         echo "Waiting... ${elapsed}s / ${MAX_WAIT_SECONDS}s"
     done
 
-    die "Timed out waiting for ASG instances"
+    return 1
 }
 
 
 # ============================================================
-# Launch Template version validation
+# Launch Template validation
 # ============================================================
 
 check_launch_template_versions() {
@@ -336,11 +399,12 @@ check_launch_template_versions() {
 
     local latest_version
 
-    latest_version="$(get_latest_launch_template_version)"
+    latest_version="$(get_latest_launch_template_version || true)"
 
-    [ -n "$latest_version" ] && \
-        [ "$latest_version" != "None" ] || \
-        die "Could not determine latest Launch Template version"
+    if [ -z "$latest_version" ] || [ "$latest_version" = "None" ]; then
+        error "Could not determine latest Launch Template version"
+        return 1
+    fi
 
     echo "Latest Launch Template version: $latest_version"
 
@@ -348,9 +412,10 @@ check_launch_template_versions() {
 
     instances="$(get_instance_ids || true)"
 
-    [ -n "$instances" ] && \
-        [ "$instances" != "None" ] || \
-        die "No InService instances found"
+    if [ -z "$instances" ] || [ "$instances" = "None" ]; then
+        error "No InService instances found"
+        return 1
+    fi
 
     local stale_instances=""
 
@@ -366,6 +431,7 @@ check_launch_template_versions() {
                 --output text \
                 2>/dev/null || true
         )"
+
         echo "Instance $instance_id → Launch Template version $instance_version"
 
         if [ "$instance_version" != "$latest_version" ]; then
@@ -417,20 +483,15 @@ check_launch_template_versions() {
         echo "Instance refresh status: $status"
 
         case "$status" in
-
             Successful)
                 success "Instance refresh completed"
                 return 0
                 ;;
 
-            Failed|Cancelled|RollbackFailed)
-                die "Instance refresh ended with status: $status"
+            Failed|Cancelled|RollbackFailed|RollbackSuccessful)
+                error "Instance refresh ended with status: $status"
+                return 1
                 ;;
-
-            RollbackSuccessful)
-                die "Instance refresh rolled back successfully, meaning the refresh failed"
-                ;;
-
         esac
 
         sleep "$HEALTH_CHECK_INTERVAL"
@@ -438,7 +499,8 @@ check_launch_template_versions() {
         elapsed=$((elapsed + HEALTH_CHECK_INTERVAL))
     done
 
-    die "Timed out waiting for instance refresh"
+    error "Timed out waiting for instance refresh"
+    return 1
 }
 
 
@@ -454,7 +516,6 @@ wait_for_ssm() {
     while [ "$elapsed" -lt "$MAX_WAIT_SECONDS" ]; do
 
         local instances
-
         instances="$(get_instance_ids || true)"
 
         if [ -n "$instances" ] && [ "$instances" != "None" ]; then
@@ -493,7 +554,8 @@ wait_for_ssm() {
         echo "SSM waiting... ${elapsed}s / ${MAX_WAIT_SECONDS}s"
     done
 
-    die "Timed out waiting for expected instances in SSM"
+    error "Timed out waiting for expected instances in SSM"
+    return 1
 }
 
 
@@ -512,16 +574,18 @@ show_target_health() {
         --output table
 }
 
+
 wait_for_healthy_targets() {
     log "Waiting for ALB target health"
 
     local tg_arn
 
-    tg_arn="$(get_target_group_arn)"
+    tg_arn="$(get_target_group_arn || true)"
 
-    [ -n "$tg_arn" ] && \
-        [ "$tg_arn" != "None" ] || \
-        die "Could not find target group"
+    if [ -z "$tg_arn" ] || [ "$tg_arn" = "None" ]; then
+        error "Could not find target group"
+        return 1
+    fi
 
     local elapsed=0
 
@@ -545,7 +609,7 @@ wait_for_healthy_targets() {
 
         echo
         echo "Current target health:"
-        show_target_health "$tg_arn"
+        show_target_health "$tg_arn" || true
 
         sleep "$HEALTH_CHECK_INTERVAL"
 
@@ -559,22 +623,14 @@ wait_for_healthy_targets() {
 
     echo
     echo "Final target health:"
-    show_target_health "$tg_arn"
-
-    echo
-    echo "Possible causes:"
-    echo "  - Application is not listening on port 8080"
-    echo "  - User-data failed"
-    echo "  - Application crashed"
-    echo "  - Security group blocks ALB -> EC2"
-    echo "  - Target health-check path is incorrect"
+    show_target_health "$tg_arn" || true
 
     return 1
 }
 
 
 # ============================================================
-# Application validation
+# Application test
 # ============================================================
 
 test_application() {
@@ -582,11 +638,12 @@ test_application() {
 
     local dns
 
-    dns="$(get_alb_dns)"
+    dns="$(get_alb_dns || true)"
 
-    [ -n "$dns" ] && \
-        [ "$dns" != "None" ] || \
-        die "Could not determine ALB DNS name"
+    if [ -z "$dns" ] || [ "$dns" = "None" ]; then
+        error "Could not determine ALB DNS name"
+        return 1
+    fi
 
     echo
     echo "ALB:"
@@ -623,7 +680,7 @@ test_application() {
     fi
 
     if ! echo "$response" | grep -q "$EXPECTED_APP_TEXT"; then
-        error "HTTP 200 received, but expected application content was not found"
+        error "Expected application content was not found"
         return 1
     fi
 
@@ -632,7 +689,7 @@ test_application() {
 
 
 # ============================================================
-# Deployment verification
+# Application verification
 # ============================================================
 
 verify_deployment() {
@@ -640,36 +697,45 @@ verify_deployment() {
     log "POST-DEPLOYMENT VERIFICATION"
     log "========================================"
 
-    wait_for_instances
+    wait_for_instances || return 1
 
-    check_launch_template_versions
+    check_launch_template_versions || return 1
 
-    # Refresh may have replaced the instances.
-    # Re-check that the ASG has its expected fleet.
-    wait_for_instances
+    wait_for_instances || return 1
 
-    wait_for_ssm
+    wait_for_ssm || return 1
 
-    if ! wait_for_healthy_targets; then
-
-        error "Deployment verification FAILED"
-
-        echo
-        echo "Useful diagnostics:"
-        echo
-        echo "Check ASG:"
-        echo "  aws autoscaling describe-auto-scaling-instances --region $EXPECTED_REGION"
-        echo
-        echo "Check target health:"
-        echo "  aws elbv2 describe-target-health --target-group-arn <ARN> --region $EXPECTED_REGION"
-        echo
-        echo "Check SSM:"
-        echo "  aws ssm describe-instance-information --region $EXPECTED_REGION"
-
-        return 1
-    fi
+    wait_for_healthy_targets || return 1
 
     test_application
+}
+
+
+# ============================================================
+# Destroy application stack
+# ============================================================
+
+destroy_app() {
+    log "Destroying application infrastructure"
+
+    if ! state_bucket_exists; then
+        warn "Terraform state bucket does not exist."
+        warn "There is no application state to destroy."
+        return 0
+    fi
+
+    init_app_backend || return 1
+
+    if ! app_state_exists; then
+        success "No application Terraform state exists. Nothing to destroy."
+        return 0
+    fi
+
+    terraform -chdir="$APP_DIR" destroy \
+        -input=false \
+        -auto-approve
+
+    success "Application infrastructure destroyed"
 }
 
 
@@ -688,43 +754,55 @@ up() {
     check_aws
 
     validate_user_data
-    validate_terraform
-
-    create_plan
+    validate_app_terraform
+    validate_pipeline_terraform
 
     echo
     echo "========================================"
-    echo "Review the Terraform plan above."
+    echo "This command bootstraps the persistent"
+    echo "CodePipeline / CodeBuild control plane."
+    echo
+    echo "The application infrastructure is NOT"
+    echo "created directly by this command."
+    echo
+    echo "After bootstrap:"
+    echo
+    echo "  GitHub push"
+    echo "      ↓"
+    echo "  CodePipeline"
+    echo "      ↓"
+    echo "  Validate + Checkov"
+    echo "      ↓"
+    echo "  Terraform Apply"
+    echo "      ↓"
+    echo "  Application verification"
+    echo "      ↓"
+    echo "  PASS → KEEP"
+    echo "  FAIL → DESTROY APP"
     echo "========================================"
     echo
 
-    read -r -p "Apply this EXACT plan? Type YES to continue: " confirmation
+    plan_pipeline
+
+    echo
+    read -r -p "Create/update the pipeline control plane? Type YES to continue: " confirmation
 
     if [ "$confirmation" != "YES" ]; then
-        echo "Apply cancelled."
+        echo "Bootstrap cancelled."
         exit 0
     fi
 
-    apply_plan
-
-    verify_deployment
+    apply_pipeline
 
     echo
     echo "========================================"
-    echo "       DEPLOYMENT SUCCESSFUL"
+    echo "       PIPELINE BOOTSTRAPPED"
     echo "========================================"
-
-    local dns
-
-    dns="$(get_alb_dns)"
-
     echo
-    echo "Application:"
-    echo "http://$dns"
+    echo "Next:"
+    echo "  Push to GitHub to trigger the pipeline."
     echo
-
-    echo "Remember to destroy the lab when finished:"
-    echo
+    echo "To tear down the lab:"
     echo "  ./lab.sh down"
     echo
 }
@@ -745,9 +823,26 @@ plan() {
     check_aws
 
     validate_user_data
-    validate_terraform
+    validate_app_terraform
+    validate_pipeline_terraform
 
-    terraform -chdir="$TERRAFORM_DIR" plan
+    echo
+    echo "========== PIPELINE PLAN =========="
+    terraform -chdir="$PIPELINE_DIR" plan -input=false
+
+    echo
+    echo "========== APPLICATION PLAN =========="
+    echo "The application uses an S3 backend created"
+    echo "by the pipeline stack."
+
+    if state_bucket_exists; then
+        init_app_backend
+
+        terraform -chdir="$APP_DIR" plan -input=false
+    else
+        warn "State bucket does not exist yet."
+        warn "Run ./lab.sh up first to bootstrap the pipeline."
+    fi
 }
 
 
@@ -765,29 +860,44 @@ down() {
     check_project
     check_aws
 
-    create_destroy_plan
-
     echo
-    echo "========================================"
-    echo "WARNING: EVERYTHING IN THIS TERRAFORM"
-    echo "STATE WILL BE DESTROYED."
-    echo "========================================"
+    echo "This will destroy:"
+    echo
+    echo "  1. Application infrastructure"
+    echo "     - VPC"
+    echo "     - ALB"
+    echo "     - EC2 / ASG"
+    echo "     - RDS"
+    echo "     - SSM endpoints"
+    echo "     - Flow Logs"
+    echo
+    echo "  2. Pipeline control plane"
+    echo "     - CodePipeline"
+    echo "     - CodeBuild"
+    echo "     - Artifact bucket"
+    echo "     - Terraform state bucket"
+    echo
+    echo "The application MUST be destroyed first"
+    echo "because its Terraform state is stored in"
+    echo "the pipeline-managed state bucket."
     echo
 
-    read -r -p "Destroy everything? Type DESTROY to continue: " confirmation
+    read -r -p "Destroy the entire lab? Type DESTROY to continue: " confirmation
 
     if [ "$confirmation" != "DESTROY" ]; then
         echo "Destroy cancelled."
         exit 0
     fi
 
-    log "Applying destroy plan"
+    destroy_app
 
-    terraform -chdir="$TERRAFORM_DIR" apply \
+    log "Destroying pipeline control plane"
+
+    terraform -chdir="$PIPELINE_DIR" destroy \
         -input=false \
-        "$DESTROY_PLAN_FILE"
+        -auto-approve
 
-    success "Terraform destroy completed"
+    success "Pipeline control plane destroyed"
 
     echo
     echo "========================================"
@@ -817,9 +927,9 @@ case "${1:-}" in
     *)
         echo
         echo "Usage:"
-        echo "  ./lab.sh up       Validate, deploy, and verify"
-        echo "  ./lab.sh plan     Validate and preview changes"
-        echo "  ./lab.sh down     Safely destroy the lab"
+        echo "  ./lab.sh up       Bootstrap pipeline infrastructure"
+        echo "  ./lab.sh plan     Preview pipeline and app changes"
+        echo "  ./lab.sh down     Destroy app, then pipeline"
         echo
         exit 1
         ;;

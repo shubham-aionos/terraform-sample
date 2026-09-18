@@ -6,6 +6,7 @@ resource "aws_cloudwatch_log_group" "codebuild" {
 }
 
 resource "aws_codebuild_project" "terraform_ci" {
+  #checkov:skip=CKV_AWS_147:Customer-managed KMS encryption is deferred for this disposable cost-conscious lab
   name         = "three-tier-terraform-ci"
   service_role = aws_iam_role.codebuild.arn
 

@@ -13,7 +13,7 @@ phases:
     commands:
       - echo "Getting AWS account ID..."
       - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - echo "AWS account: $AWS_ACCOUNT_ID"
+      - 'echo "AWS account: $AWS_ACCOUNT_ID"'
 
       - echo "Initializing application Terraform with persistent S3 state..."
       - terraform -chdir=terraform/app init -input=false -reconfigure -backend-config="bucket=three-tier-terraform-state-$AWS_ACCOUNT_ID" -backend-config="key=app/terraform.tfstate" -backend-config="region=ap-south-1" -backend-config="encrypt=true" -backend-config="use_lockfile=true"

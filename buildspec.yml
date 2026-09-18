@@ -4,12 +4,15 @@ phases:
   install:
     commands:
       - echo "Installing Terraform..."
-      - curl -fsSLo terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
-      - unzip -o terraform.zip
-      - install -m 0755 terraform /usr/local/bin/terraform
+      - rm -f /tmp/terraform.zip
+      - rm -rf /tmp/terraform
+      - curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip
+      - unzip -t /tmp/terraform.zip
+      - unzip -o /tmp/terraform.zip -d /tmp/terraform
+      - install -m 0755 /tmp/terraform/terraform /usr/local/bin/terraform
       - terraform version
       - echo "Installing Checkov..."
-      - pip3 install --no-cache-dir checkov==3.3.17
+      - pip3 install --no-cache-dir checkov==3.3.19
 
   pre_build:
     commands:

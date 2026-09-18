@@ -896,60 +896,58 @@ plan() {
 # ============================================================
 
 down() {
-    echo
-    echo "========================================"
-    echo "       AWS THREE-TIER LAB - DOWN"
-    echo "========================================"
-
-    check_tools
-    check_project
-    check_aws
+    log "Starting disposable lab teardown"
 
     echo
-    echo "This will destroy:"
-    echo
-    echo "  1. Application infrastructure"
-    echo "     - VPC"
-    echo "     - ALB"
-    echo "     - EC2 / ASG"
-    echo "     - RDS"
-    echo "     - SSM endpoints"
-    echo "     - Flow Logs"
-    echo
-    echo "  2. Pipeline control plane"
-    echo "     - CodePipeline"
-    echo "     - CodeBuild"
-    echo "     - Artifact bucket"
-    echo "     - Terraform state bucket"
-    echo
-    echo "The application MUST be destroyed first"
-    echo "because its Terraform state is stored in"
-    echo "the pipeline-managed state bucket."
-    echo
 
-    read -r -p "Destroy the entire lab? Type DESTROY to continue: " confirmation
-
-    if [ "$confirmation" != "DESTROY" ]; then
-        echo "Destroy cancelled."
-        exit 0
-    fi
-
+    # Application infrastructure is always destroyed first.
     destroy_app
 
-    log "Destroying pipeline control plane"
+    echo
 
-    terraform -chdir="$PIPELINE_DIR" destroy \
-        -input=false \
-        -auto-approve
+    log "Destroying pipeline control plane while preserving GitHub connection"
 
-    success "Pipeline control plane destroyed"
+    # Keep the Terraform-managed GitHub CodeConnections connection.
+    # Everything else in the pipeline state is disposable.
+
+    local targets=()
+    local resource
+
+    while IFS= read -r resource; do
+        if [ "$resource" = "aws_codestarconnections_connection.github" ]; then
+            log "Preserving GitHub connection: $resource"
+            continue
+        fi
+
+        targets+=("-target=$resource")
+    done < <(
+        terraform -chdir="$PIPELINE_DIR" state list
+    )
+
+    if [ "${#targets[@]}" -gt 0 ]; then
+        local terraform_args=(
+            -input=false
+            -auto-approve
+        )
+
+        terraform_args+=("${targets[@]}")
+
+        terraform -chdir="$PIPELINE_DIR" destroy "${terraform_args[@]}"
+    else
+        log "No disposable pipeline resources found"
+    fi
 
     echo
-    echo "========================================"
-    echo "       LAB DESTROYED"
-    echo "========================================"
-}
 
+    success "Disposable lab destroyed"
+    success "GitHub connection preserved"
+
+    echo
+    echo "Preserved connection:"
+    echo "  aws_codestarconnections_connection.github"
+    echo
+    echo "Run './lab.sh up' to recreate the lab using the existing GitHub connection."
+}
 
 # ============================================================
 # MAIN

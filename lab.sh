@@ -26,6 +26,11 @@ set -Eeuo pipefail
 #   Apply -> verify application
 #       PASS -> keep infrastructure
 #       FAIL -> destroy application infrastructure
+#
+# IMPORTANT BOOTSTRAP DESIGN:
+#   The pipeline stack owns the S3 Terraform state bucket.
+#   Therefore `up` MUST bootstrap the pipeline stack BEFORE
+#   initializing the application Terraform backend.
 # ============================================================
 
 EXPECTED_REGION="ap-south-1"
@@ -201,11 +206,20 @@ validate_app_terraform() {
 
     terraform -chdir="$APP_DIR" fmt -check=false
 
-    log "Initializing application Terraform"
+    log "Initializing application Terraform for validation"
 
+    # IMPORTANT:
+    # This is validation-only initialization.
+    # We deliberately disable the backend so this function does
+    # not depend on the pipeline-managed S3 state bucket.
+    #
+    # -reconfigure also prevents stale local .terraform backend
+    # configuration from interfering after a previous deployment
+    # or destroy.
     terraform -chdir="$APP_DIR" init \
         -backend=false \
-        -input=false
+        -input=false \
+        -reconfigure
 
     log "Validating application Terraform"
 
@@ -279,11 +293,11 @@ state_bucket_exists() {
 init_app_backend() {
     log "Initializing application Terraform with S3 state"
 
-    state_bucket_exists || {
+    if ! state_bucket_exists; then
         error "Terraform state bucket does not exist:"
         error "  $STATE_BUCKET"
         return 1
-    }
+    fi
 
     terraform -chdir="$APP_DIR" init \
         -input=false \
@@ -754,7 +768,17 @@ up() {
     check_aws
 
     validate_user_data
-    validate_app_terraform
+
+    # ========================================================
+    # IMPORTANT BOOTSTRAP ORDER
+    #
+    # The pipeline Terraform stack owns the S3 state bucket.
+    # Therefore DO NOT initialize the application backend
+    # before the pipeline stack has been created.
+    # ========================================================
+
+    log "Validating pipeline Terraform"
+
     validate_pipeline_terraform
 
     echo
@@ -794,6 +818,19 @@ up() {
 
     apply_pipeline
 
+    # ========================================================
+    # The pipeline stack has now created the S3 state bucket.
+    # Application Terraform can safely be initialized now.
+    # ========================================================
+
+    validate_app_terraform
+
+    if ! state_bucket_exists; then
+        die "Pipeline was applied, but Terraform state bucket was not created: $STATE_BUCKET"
+    fi
+
+    success "Terraform state bucket is available"
+
     echo
     echo "========================================"
     echo "       PIPELINE BOOTSTRAPPED"
@@ -801,6 +838,14 @@ up() {
     echo
     echo "Next:"
     echo "  Push to GitHub to trigger the pipeline."
+    echo
+    echo "The pipeline will:"
+    echo "  1. Validate Terraform"
+    echo "  2. Run Checkov"
+    echo "  3. Apply application infrastructure"
+    echo "  4. Verify the application"
+    echo "  5. KEEP infrastructure if verification passes"
+    echo "  6. DESTROY application infrastructure if verification fails"
     echo
     echo "To tear down the lab:"
     echo "  ./lab.sh down"

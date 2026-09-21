@@ -1,6 +1,5 @@
-resource "aws_codestarconnections_connection" "github" {
-  name          = "three-tier-github"
-  provider_type = "GitHub"
+data "aws_codestarconnections_connection" "github" {
+  arn = "arn:aws:codestar-connections:ap-south-1:812114845397:connection/55c323f8-bfb5-4e6c-9117-eed1fd87e421"
 }
 
 resource "aws_iam_role" "codepipeline" {
@@ -38,7 +37,7 @@ resource "aws_iam_role_policy" "codepipeline" {
           "codestar-connections:UseConnection"
         ]
 
-        Resource = aws_codestarconnections_connection.github.arn
+        Resource = data.aws_codestarconnections_connection.github.arn
       },
       {
         Sid    = "UseCodeBuild"
@@ -158,7 +157,7 @@ resource "aws_codepipeline" "three_tier" {
       output_artifacts = ["source_output"]
 
       configuration = {
-        ConnectionArn    = aws_codestarconnections_connection.github.arn
+        ConnectionArn    = data.aws_codestarconnections_connection.github.arn
         FullRepositoryId = "shubham-aionos/terraform-sample"
         BranchName       = "main"
         DetectChanges    = "true"

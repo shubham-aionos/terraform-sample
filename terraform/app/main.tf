@@ -340,8 +340,8 @@ resource "aws_launch_template" "app" {
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
-    aws_region       = "ap-south-1"
-    db_secret_arn    = aws_db_instance.postgres.master_user_secret[0].secret_arn
+    aws_region        = "ap-south-1"
+    db_secret_arn     = aws_db_instance.postgres.master_user_secret[0].secret_arn
     runtime_s3_bucket = "three-tier-codepipeline-artifacts-${data.aws_caller_identity.current.account_id}"
     runtime_s3_key    = "runtime/psycopg-runtime.zip"
   }))

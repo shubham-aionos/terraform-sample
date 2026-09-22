@@ -26,9 +26,9 @@ resource "aws_db_instance" "postgres" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = "appdb"
-  username = "postgres"
-  password = random_password.db.result
+  db_name                     = "appdb"
+  username                    = "postgres"
+  manage_master_user_password = true
 
   port = 5432
 

@@ -18,6 +18,14 @@ phases:
       - echo "Initializing application Terraform with persistent S3 state..."
       - terraform -chdir=terraform/app init -input=false -reconfigure -backend-config="bucket=three-tier-terraform-state-$AWS_ACCOUNT_ID" -backend-config="key=app/terraform.tfstate" -backend-config="region=ap-south-1" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
 
+      - echo "Preparing offline PostgreSQL runtime bundle..."
+      - rm -rf /tmp/psycopg-runtime /tmp/psycopg-runtime.zip
+      - mkdir -p /tmp/psycopg-runtime
+      - python3 -m pip download --only-binary=:all: --platform manylinux_2_17_x86_64 --python-version 3.12 --implementation cp --abi cp312 "psycopg[binary]==3.3.4" -d /tmp/psycopg-runtime
+      - cd /tmp/psycopg-runtime && zip -q -r /tmp/psycopg-runtime.zip .
+      - aws s3 cp /tmp/psycopg-runtime.zip "s3://three-tier-codepipeline-artifacts-$AWS_ACCOUNT_ID/runtime/psycopg-runtime.zip"
+      - echo "Offline PostgreSQL runtime bundle uploaded."
+
       - echo "Validating application Terraform..."
       - terraform -chdir=terraform/app validate
 
@@ -113,7 +121,7 @@ phases:
                 echo "Application response:"
                 echo "$RESPONSE"
 
-                if echo "$RESPONSE" | grep -Fq "Hello from the AWS Three-Tier Architecture"; then
+                if echo "$RESPONSE" | grep -Fq "Database status: Connected"; then
                   TEXT_FOUND=1
                   break
                 fi
@@ -124,12 +132,12 @@ phases:
               if [ "$TEXT_FOUND" -eq 1 ]; then
                 echo "=========================================="
                 echo "APPLICATION VERIFICATION PASSED"
-                echo "Expected application text was found."
+                echo "Expected database-backed application response was found."
                 echo "=========================================="
               else
                 echo "=========================================="
                 echo "APPLICATION VERIFICATION FAILED"
-                echo "Expected application text was not found."
+                echo "Expected database-backed application response was not found."
                 echo "=========================================="
                 DEPLOY_RESULT=1
               fi

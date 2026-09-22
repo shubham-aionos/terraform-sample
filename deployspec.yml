@@ -15,28 +15,6 @@ phases:
       - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - 'echo "AWS account: $AWS_ACCOUNT_ID"'
 
-      - echo "Preparing application artifact..."
-      - export APPLICATION_ARTIFACT_BUCKET="three-tier-codepipeline-artifacts-$AWS_ACCOUNT_ID"
-      - export APPLICATION_ARTIFACT_KEY="applications/$CODEBUILD_BUILD_NUMBER/application.tar.gz"
-      - 'echo "Artifact bucket: $APPLICATION_ARTIFACT_BUCKET"'
-      - 'echo "Artifact key: $APPLICATION_ARTIFACT_KEY"'
-
-      - echo "Creating application package directory..."
-      - rm -rf /tmp/application-package
-      - mkdir -p /tmp/application-package
-      - cp terraform/app/application/app.py /tmp/application-package/
-      - cp terraform/app/application/requirements.txt /tmp/application-package/
-
-      - echo "Installing Python dependencies into application package..."
-      - python3 -m pip install --upgrade --target /tmp/application-package/python-deps boto3 "psycopg[binary]"
-
-      - echo "Creating application artifact..."
-      - tar -czf /tmp/application.tar.gz -C /tmp/application-package .
-      - tar -tzf /tmp/application.tar.gz
-
-      - echo "Uploading application artifact..."
-      - aws s3 cp /tmp/application.tar.gz "s3://$APPLICATION_ARTIFACT_BUCKET/$APPLICATION_ARTIFACT_KEY"
-
       - echo "Initializing application Terraform with persistent S3 state..."
       - terraform -chdir=terraform/app init -input=false -reconfigure -backend-config="bucket=three-tier-terraform-state-$AWS_ACCOUNT_ID" -backend-config="key=app/terraform.tfstate" -backend-config="region=ap-south-1" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
 
@@ -53,10 +31,7 @@ phases:
         echo "TERRAFORM APPLY"
         echo "=========================================="
 
-        terraform -chdir=terraform/app apply \
-          -auto-approve \
-          -var="application_artifact_bucket=$APPLICATION_ARTIFACT_BUCKET" \
-          -var="application_artifact_key=$APPLICATION_ARTIFACT_KEY"
+        terraform -chdir=terraform/app apply -auto-approve
 
         if [ $? -ne 0 ]; then
           echo "Terraform apply failed."
@@ -127,10 +102,10 @@ phases:
               echo "ALB DNS: $ALB_DNS"
 
               echo "=========================================="
-              echo "VERIFYING APPLICATION AND DATABASE"
+              echo "VERIFYING APPLICATION TEXT"
               echo "=========================================="
 
-              DATABASE_FOUND=0
+              TEXT_FOUND=0
 
               for i in $(seq 1 12); do
                 RESPONSE=$(curl -fsS "http://$ALB_DNS/" 2>/dev/null)
@@ -138,24 +113,23 @@ phases:
                 echo "Application response:"
                 echo "$RESPONSE"
 
-                if echo "$RESPONSE" | grep -Fq "Database status: Connected" &&
-                   echo "$RESPONSE" | grep -Fq "Database query: Successful"; then
-                  DATABASE_FOUND=1
+                if echo "$RESPONSE" | grep -Fq "Hello from the AWS Three-Tier Architecture"; then
+                  TEXT_FOUND=1
                   break
                 fi
 
                 sleep 10
               done
 
-              if [ "$DATABASE_FOUND" -eq 1 ]; then
+              if [ "$TEXT_FOUND" -eq 1 ]; then
                 echo "=========================================="
-                echo "APPLICATION AND DATABASE VERIFICATION PASSED"
-                echo "Database connection and query succeeded."
+                echo "APPLICATION VERIFICATION PASSED"
+                echo "Expected application text was found."
                 echo "=========================================="
               else
                 echo "=========================================="
-                echo "APPLICATION AND DATABASE VERIFICATION FAILED"
-                echo "Database connection/query was not successful."
+                echo "APPLICATION VERIFICATION FAILED"
+                echo "Expected application text was not found."
                 echo "=========================================="
                 DEPLOY_RESULT=1
               fi
@@ -169,10 +143,7 @@ phases:
           echo "DEPLOYMENT FAILED — DESTROYING APPLICATION INFRASTRUCTURE"
           echo "=========================================="
 
-          terraform -chdir=terraform/app destroy \
-            -auto-approve \
-            -var="application_artifact_bucket=$APPLICATION_ARTIFACT_BUCKET" \
-            -var="application_artifact_key=$APPLICATION_ARTIFACT_KEY"
+          terraform -chdir=terraform/app destroy -auto-approve
 
           DESTROY_RESULT=$?
 
@@ -193,7 +164,6 @@ phases:
         echo "DEPLOYMENT VERIFIED — KEEPING INFRASTRUCTURE"
         echo "=========================================="
         echo "Application is deployed and responding correctly."
-        echo "Database connection and query succeeded."
         echo "Terraform state has been persisted to S3."
         echo "=========================================="
 

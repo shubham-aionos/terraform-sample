@@ -339,7 +339,10 @@ resource "aws_launch_template" "app" {
     }
   }
 
-  user_data = filebase64("${path.module}/user_data.sh")
+  user_data = base64encode(templatefile("${path.module}/user_data.sh", {
+    application_artifact_bucket = var.application_artifact_bucket
+    application_artifact_key    = var.application_artifact_key
+  }))
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_ssm.name

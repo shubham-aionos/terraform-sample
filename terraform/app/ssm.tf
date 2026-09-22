@@ -77,3 +77,42 @@ resource "aws_vpc_endpoint" "ec2messages" {
   }
 }
 
+
+
+# S3 gateway endpoint: free private access from the application subnets to the
+# CodePipeline artifact bucket used for the offline PostgreSQL driver bundle.
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.ap-south-1.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [
+    aws_route_table.private_app.id
+  ]
+
+  tags = {
+    Name = "three-tier-s3"
+  }
+}
+
+# Private Secrets Manager access so the application can retrieve the RDS-managed
+# master secret without NAT or a public IP.
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.ap-south-1.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+
+  subnet_ids = [
+    aws_subnet.app_a.id,
+    aws_subnet.app_b.id
+  ]
+
+  security_group_ids = [
+    aws_security_group.ssm_endpoints.id
+  ]
+
+  tags = {
+    Name = "three-tier-secretsmanager"
+  }
+}

@@ -147,7 +147,8 @@ resource "aws_iam_role_policy" "codebuild_deploy" {
           "iam:ListInstanceProfilesForRole"
         ]
         Resource = [
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/three-tier-ec2-ssm-role"
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/three-tier-ec2-ssm-role",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/three-tier-vpc-flow-logs-role"
         ]
       },
       {

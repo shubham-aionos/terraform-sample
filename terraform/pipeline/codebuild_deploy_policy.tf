@@ -41,6 +41,14 @@ resource "aws_iam_role_policy" "codebuild_deploy" {
         Resource = "arn:aws:kms:ap-south-1:${data.aws_caller_identity.current.account_id}:key/42921dbd-1273-4ac8-b2ad-bfaaf5d953dc"
       },
       {
+        Sid    = "SecretsManagerKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:ap-south-1:${data.aws_caller_identity.current.account_id}:key/d09559c0-02d8-4d28-beb6-e3f318e0c994"
+      },
+      {
         Sid      = "CloudWatchLogs"
         Effect   = "Allow"
         Action   = ["logs:*"]

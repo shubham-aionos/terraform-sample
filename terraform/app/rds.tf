@@ -1,3 +1,7 @@
+data "aws_kms_key" "rds" {
+  key_id = "alias/aws/rds"
+}
+
 resource "aws_db_subnet_group" "main" {
   name = "three-tier-db-subnet-group"
 
@@ -25,7 +29,7 @@ resource "aws_db_instance" "postgres" {
   max_allocated_storage = 50
   storage_type          = "gp3"
   storage_encrypted     = true
-  kms_key_id            = "alias/aws/rds"
+  kms_key_id            = data.aws_kms_key.rds.arn
 
   db_name                     = "appdb"
   username                    = "postgres"

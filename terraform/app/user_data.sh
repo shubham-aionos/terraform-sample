@@ -241,13 +241,50 @@ set -a
 source /etc/three-tier-app.env
 set +a
 nohup /usr/bin/python3 /opt/app/app.py > /var/log/app-server.log 2>&1 &
+APP_PID=$!
 
 sleep 3
 
+echo "=== CHECKING APPLICATION PROCESS ==="
+if ! kill -0 "$APP_PID" 2>/dev/null; then
+    echo "ERROR: Application process exited."
+    echo "=== APP SERVER LOG ==="
+    cat /var/log/app-server.log || true
+    exit 1
+fi
+
+echo "Application process is running with PID $APP_PID"
+
 echo "=== CHECKING LOCAL APPLICATION ==="
-curl -i http://127.0.0.1:8080/ || true
+LOCAL_READY=0
+
+for attempt in {1..12}; do
+    if RESPONSE=$(curl -fsS http://127.0.0.1:8080/); then
+        echo "Local application responded successfully:"
+        echo "$RESPONSE"
+        LOCAL_READY=1
+        break
+    fi
+
+    echo "Application not ready yet; attempt $attempt/12"
+
+    if [ "$attempt" -eq 12 ]; then
+        echo "ERROR: Application did not become ready."
+        echo "=== APP SERVER LOG ==="
+        cat /var/log/app-server.log || true
+        echo "=== LISTENING PORTS ==="
+        ss -lntp || true
+        exit 1
+    fi
+
+    sleep 5
+done
+
+if [ "$LOCAL_READY" -ne 1 ]; then
+    echo "ERROR: Local application readiness check failed."
+    exit 1
+fi
 
 echo "=== CHECKING PORT 8080 ==="
-ss -lntp | grep 8080 || true
-
+ss -lntp | grep 8080
 echo "=== DATABASE-BACKED USER DATA FINISHED ==="

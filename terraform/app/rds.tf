@@ -25,6 +25,7 @@ resource "aws_db_instance" "postgres" {
   max_allocated_storage = 50
   storage_type          = "gp3"
   storage_encrypted     = true
+  kms_key_id            = "alias/aws/rds"
 
   db_name                     = "appdb"
   username                    = "postgres"

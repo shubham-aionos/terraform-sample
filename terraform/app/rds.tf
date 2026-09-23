@@ -1,7 +1,9 @@
 data "aws_kms_key" "rds" {
   key_id = "alias/aws/rds"
 }
-
+data "aws_kms_key" "secretsmanager" {
+  key_id = "alias/aws/secretsmanager"
+}
 resource "aws_db_subnet_group" "main" {
   name = "three-tier-db-subnet-group"
 
@@ -24,16 +26,16 @@ resource "aws_db_instance" "postgres" {
   engine         = "postgres"
   engine_version = "17"
 
-  instance_class        = "db.t3.micro"
-  allocated_storage     = 20
-  max_allocated_storage = 50
-  storage_type          = "gp3"
-  storage_encrypted     = true
-  kms_key_id            = data.aws_kms_key.rds.arn
-
-  db_name                     = "appdb"
-  username                    = "postgres"
-  manage_master_user_password = true
+  instance_class                = "db.t3.micro"
+  allocated_storage             = 20
+  max_allocated_storage         = 50
+  storage_type                  = "gp3"
+  storage_encrypted             = true
+  kms_key_id                    = data.aws_kms_key.rds.arn
+  master_user_secret_kms_key_id = data.aws_kms_key.secretsmanager.arn
+  db_name                       = "appdb"
+  username                      = "postgres"
+  manage_master_user_password   = true
 
   port = 5432
 

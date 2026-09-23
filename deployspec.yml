@@ -83,11 +83,19 @@ phases:
             ALB_READY=0
 
             for i in $(seq 1 60); do
-              HEALTHY=$(aws elbv2 describe-target-health \
+              HEALTH_JSON=$(aws elbv2 describe-target-health \
                 --target-group-arn "$TG_ARN" \
-                --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' \
-                --output text 2>/dev/null)
+                --query 'TargetHealthDescriptions[].{Id:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason,Description:TargetHealth.Description}' \
+                --output json 2>/dev/null)
 
+              HEALTHY=$(echo "$HEALTH_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(sum(1 for x in data if x.get("State") == "healthy"))' 2>/dev/null)
+
+              if [ -z "$HEALTHY" ]; then
+                HEALTHY=0
+              fi
+
+              echo "Target health:"
+              echo "$HEALTH_JSON"
               echo "Healthy targets: $HEALTHY"
 
               if [ "$HEALTHY" -ge 2 ]; then

@@ -21,7 +21,7 @@ phases:
       - echo "Preparing offline PostgreSQL runtime bundle..."
       - rm -rf /tmp/psycopg-runtime /tmp/psycopg-runtime.zip
       - mkdir -p /tmp/psycopg-runtime
-      - python3 -m pip download --only-binary=:all: --platform manylinux_2_17_x86_64 --python-version 3.12 --implementation cp --abi cp312 "psycopg[binary]==3.3.4" -d /tmp/psycopg-runtime
+      - 'python3 -m pip download --only-binary=:all: --platform manylinux_2_17_x86_64 --python-version 3.12 --implementation cp --abi cp312 "psycopg[binary]==3.3.4" -d /tmp/psycopg-runtime'
       - cd /tmp/psycopg-runtime && zip -q -r /tmp/psycopg-runtime.zip .
       - aws s3 cp /tmp/psycopg-runtime.zip "s3://three-tier-codepipeline-artifacts-$AWS_ACCOUNT_ID/runtime/psycopg-runtime.zip"
       - echo "Offline PostgreSQL runtime bundle uploaded."

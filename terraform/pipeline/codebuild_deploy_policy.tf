@@ -33,6 +33,14 @@ resource "aws_iam_role_policy" "codebuild_deploy" {
         Resource = "*"
       },
       {
+        Sid    = "RDSKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:ap-south-1:${data.aws_caller_identity.current.account_id}:key/42921dbd-1273-4ac8-b2ad-bfaaf5d953dc"
+      },
+      {
         Sid      = "CloudWatchLogs"
         Effect   = "Allow"
         Action   = ["logs:*"]
